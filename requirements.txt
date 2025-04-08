@@ -1,7 +1,5 @@
 streamlit
 openai
-pytube
-ffmpeg-python
-whisper
-moviepy
-pydub
+opencv-python
+Pillow
+youtube-transcript-api
