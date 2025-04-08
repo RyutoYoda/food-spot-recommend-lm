@@ -1,120 +1,91 @@
 import streamlit as st
+import tempfile
+import cv2
+import os
 import openai
-from youtube_transcript_api import YouTubeTranscriptApi
-import re
 from PIL import Image
-import io
+from datetime import timedelta
 
-# --- サイドバー ---
-st.sidebar.title("🔧 設定")
-openai_api_key = st.sidebar.text_input("OpenAI APIキー", type="password")
+# --- Sidebar: API Key 入力 ---
+st.sidebar.title("🔑 API Key")
+openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
 
-if not openai_api_key:
-    st.warning("まずサイドバーから OpenAI APIキーを入力してください。")
-    st.stop()
-else:
+# --- アプリのヘッダー ---
+st.set_page_config(page_title="動画要約 with GPT-4V", layout="wide")
+st.title("🎥 GPT-4Vで自動動画要約")
+st.caption("動画内の動きが大きいシーンを検出し、画像で要約するアプリ")
+
+# --- ファイルアップロード ---
+uploaded_file = st.file_uploader("動画ファイルをアップロードしてください (mp4, mov)", type=["mp4", "mov"])
+
+if uploaded_file and openai_api_key:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+        tmp.write(uploaded_file.read())
+        video_path = tmp.name
+
+    st.video(uploaded_file)
+    st.info("🔍 動きが大きいシーンを解析中...（少々お待ちください）")
+
+    # --- OpenCVで動画処理 ---
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    interval = int(fps * 2)  # 2秒おきにフレーム比較
+    prev_frame = None
+    frame_diffs = []
+    selected_frames = []
+
+    frame_idx = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if frame_idx % interval == 0:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if prev_frame is not None:
+                diff = cv2.absdiff(prev_frame, gray)
+                score = diff.sum()
+                frame_diffs.append((frame_idx, score, frame))
+            prev_frame = gray
+        frame_idx += 1
+    cap.release()
+
+    # --- 動きが大きい上位5シーン抽出 ---
+    top_diffs = sorted(frame_diffs, key=lambda x: x[1], reverse=True)[:5]
+    st.success(f"✅ 動きが大きいシーンを {len(top_diffs)} 個検出しました")
+
+    # --- GPT-4V で画像ごとに要約 ---
     openai.api_key = openai_api_key
 
-# --- タイトル ---
-st.title("🎥 スポーツ解説LLM")
+    cols = st.columns(1)
+    for idx, (f_idx, score, frame) in enumerate(top_diffs):
+        timestamp = str(timedelta(seconds=int(f_idx / fps)))
+        image_path = f"frame_{idx}.jpg"
+        cv2.imwrite(image_path, frame)
+        image = Image.open(image_path)
 
-# --- URL入力 ---
-url = st.text_input("YouTube動画のURLを入力してください")
+        with st.container():
+            st.subheader(f"🕒 シーン {idx + 1}（{timestamp}）")
+            st.image(image, caption=f"フレームタイム: {timestamp}", use_column_width=True)
 
-# --- YouTube Video ID 抽出関数 ---
-def get_video_id(url):
-    match = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
-    return match.group(1) if match else None
+            # --- GPT-4Vによる画像要約 ---
+            with open(image_path, "rb") as img_file:
+                response = openai.chat.completions.create(
+                    model="gpt-4-vision-preview",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that summarizes visual scenes."},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "このシーンでは何が起きていますか？日本語で簡単に説明してください。"},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_file.read().encode('base64').decode()}"}}
+                            ]
+                        }
+                    ],
+                    max_tokens=100
+                )
+                caption = response.choices[0].message.content
+                st.info(f"🧠 GPTの解説: {caption}")
 
-# --- 字幕取得 ---
-def fetch_transcript(video_id):
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['ja', 'en'])
-        return transcript
-    except:
-        return None
-
-# --- GPT解説 ---
-def generate_explanation(text):
-    messages = [
-        {"role": "system", "content": "あなたは教育系YouTuberです。視聴者に分かりやすく丁寧に解説してください。"},
-        {"role": "user", "content": f"次の字幕を元に、内容をわかりやすく解説してください:\n\n{text[:3000]}"}
-    ]
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=messages
-    )
-    return response.choices[0].message.content
-
-# --- GPT-4V 画像説明 ---
-def generate_image_description(image):
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    buffered.seek(0)
-
-    response = openai.ChatCompletion.create(
-        model="gpt-4-vision-preview",
-        messages=[
-            {"role": "system", "content": "あなたは画像から内容を読み取り、動画の補足説明を行うアシスタントです。"},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "この画像の内容を解説してください"},
-                    {"type": "image_url", "image_url": {"url": "data:image/png;base64," + buffered.getvalue().hex()}}
-                ]
-            }
-        ],
-        max_tokens=500
-    )
-    return response.choices[0].message.content
-
-# --- メイン処理 ---
-if url:
-    video_id = get_video_id(url)
-    st.video(url)
-
-    st.subheader("📄 字幕の解説")
-    transcript_data = fetch_transcript(video_id)
-
-    if transcript_data:
-        # 字幕を時間帯でチャンク化（例：30秒単位）
-        chunk_size = 30
-        chunks = []
-        current_chunk = ""
-        current_time = 0
-
-        for entry in transcript_data:
-            if entry['start'] < current_time + chunk_size:
-                current_chunk += entry['text'] + " "
-            else:
-                chunks.append((current_time, current_chunk.strip()))
-                current_time += chunk_size
-                current_chunk = entry['text'] + " "
-
-        # 最後のチャンク追加
-        if current_chunk:
-            chunks.append((current_time, current_chunk.strip()))
-
-        # ユーザーに時間帯選択させる
-        times = [f"{int(t//60)}:{int(t%60):02d}" for t, _ in chunks]
-        selected = st.selectbox("🕐 解説を表示する時間帯を選んでください", times)
-        index = times.index(selected)
-        st.markdown(f"**字幕内容：** {chunks[index][1]}")
-        
-        with st.spinner("GPTが解説中..."):
-            explanation = generate_explanation(chunks[index][1])
-        st.markdown("**🧠 解説：**")
-        st.write(explanation)
-    else:
-        st.error("字幕が取得できませんでした。動画に字幕がない可能性があります。")
-
-    # --- 画像アップロード ---
-    st.subheader("🖼️ 画像スクリーンショットで補足解説（GPT-4V）")
-    uploaded_file = st.file_uploader("画像ファイルをアップロードしてください", type=["png", "jpg", "jpeg"])
-    if uploaded_file:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="アップロードされた画像", use_column_width=True)
-        with st.spinner("画像から解説を生成中..."):
-            description = generate_image_description(image)
-        st.markdown("**📷 GPT-4Vによる画像解説：**")
-        st.write(description)
+        os.remove(image_path)
+else:
+    st.warning("🔼 動画ファイルと OpenAI API Key を入力してください")
