@@ -1,4 +1,4 @@
 streamlit
+opencv-python
 openai
-youtube-transcript-api
 Pillow
