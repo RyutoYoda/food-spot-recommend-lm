@@ -1,91 +1,91 @@
 import streamlit as st
-import tempfile
-import cv2
-import os
 import openai
-from PIL import Image
-from datetime import timedelta
+import ffmpeg
+import pytube
+import whisper
+import os
+import tempfile
+import re
+from moviepy.editor import VideoFileClip
+from pydub import AudioSegment
 
-# --- Sidebar: API Key 入力 ---
-st.sidebar.title("🔑 API Key")
-openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+# --- サイドバー ---
+st.sidebar.title("🔧 設定")
+openai_api_key = st.sidebar.text_input("OpenAI APIキー", type="password")
 
-# --- アプリのヘッダー ---
-st.set_page_config(page_title="動画要約 with GPT-4V", layout="wide")
-st.title("🎥 GPT-4Vで自動動画要約")
-st.caption("動画内の動きが大きいシーンを検出し、画像で要約するアプリ")
-
-# --- ファイルアップロード ---
-uploaded_file = st.file_uploader("動画ファイルをアップロードしてください (mp4, mov)", type=["mp4", "mov"])
-
-if uploaded_file and openai_api_key:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-        tmp.write(uploaded_file.read())
-        video_path = tmp.name
-
-    st.video(uploaded_file)
-    st.info("🔍 動きが大きいシーンを解析中...（少々お待ちください）")
-
-    # --- OpenCVで動画処理 ---
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    interval = int(fps * 2)  # 2秒おきにフレーム比較
-    prev_frame = None
-    frame_diffs = []
-    selected_frames = []
-
-    frame_idx = 0
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if frame_idx % interval == 0:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            if prev_frame is not None:
-                diff = cv2.absdiff(prev_frame, gray)
-                score = diff.sum()
-                frame_diffs.append((frame_idx, score, frame))
-            prev_frame = gray
-        frame_idx += 1
-    cap.release()
-
-    # --- 動きが大きい上位5シーン抽出 ---
-    top_diffs = sorted(frame_diffs, key=lambda x: x[1], reverse=True)[:5]
-    st.success(f"✅ 動きが大きいシーンを {len(top_diffs)} 個検出しました")
-
-    # --- GPT-4V で画像ごとに要約 ---
+if not openai_api_key:
+    st.warning("まずサイドバーから OpenAI APIキーを入力してください。")
+    st.stop()
+else:
     openai.api_key = openai_api_key
 
-    cols = st.columns(1)
-    for idx, (f_idx, score, frame) in enumerate(top_diffs):
-        timestamp = str(timedelta(seconds=int(f_idx / fps)))
-        image_path = f"frame_{idx}.jpg"
-        cv2.imwrite(image_path, frame)
-        image = Image.open(image_path)
+# --- タイトル ---
+st.title("🎥 YouTube動画実況 + GPT-4 解説")
 
-        with st.container():
-            st.subheader(f"🕒 シーン {idx + 1}（{timestamp}）")
-            st.image(image, caption=f"フレームタイム: {timestamp}", use_column_width=True)
+# --- URL入力 ---
+url = st.text_input("YouTube動画のURLを入力してください")
 
-            # --- GPT-4Vによる画像要約 ---
-            with open(image_path, "rb") as img_file:
-                response = openai.chat.completions.create(
-                    model="gpt-4-vision-preview",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant that summarizes visual scenes."},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": "このシーンでは何が起きていますか？日本語で簡単に説明してください。"},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_file.read().encode('base64').decode()}"}}
-                            ]
-                        }
-                    ],
-                    max_tokens=100
-                )
-                caption = response.choices[0].message.content
-                st.info(f"🧠 GPTの解説: {caption}")
+# --- YouTube Video ID 抽出関数 ---
+def get_video_id(url):
+    match = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
+    return match.group(1) if match else None
 
-        os.remove(image_path)
-else:
-    st.warning("🔼 動画ファイルと OpenAI API Key を入力してください")
+# --- Whisperで文字起こし ---
+def transcribe_audio(audio_path):
+    model = whisper.load_model("base")  # "base"モデルでOK（必要に応じて変更）
+    result = model.transcribe(audio_path)
+    return result["text"]
+
+# --- 音声抽出と文字起こし ---
+def process_video(url):
+    # YouTube動画のダウンロード
+    yt = pytube.YouTube(url)
+    stream = yt.streams.filter(file_extension="mp4").first()
+    video_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    stream.download(output_path=video_file.name)
+
+    # 動画を音声に変換
+    audio_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    audio_file_path = audio_file.name
+    video_clip = VideoFileClip(video_file.name)
+    audio_clip = video_clip.audio
+    audio_clip.write_audiofile(audio_file_path)
+
+    # Whisperで音声から文字起こし
+    transcription = transcribe_audio(audio_file_path)
+    
+    return transcription
+
+# --- GPTで解説生成 ---
+def generate_explanation(text):
+    messages = [
+        {"role": "system", "content": "あなたはスポーツ実況やニュース解説を行うプロのアシスタントです。"},
+        {"role": "user", "content": f"次の文字起こしを基に、リアルタイムで解説を生成してください:\n\n{text}"}
+    ]
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=messages
+    )
+    return response.choices[0].message.content
+
+# --- メイン処理 ---
+if url:
+    video_id = get_video_id(url)
+    if video_id:
+        st.video(url)  # 動画再生
+
+        st.subheader("📄 字幕の解説")
+        
+        with st.spinner("音声を文字起こし中..."):
+            transcription = process_video(url)
+        
+        st.write("**文字起こし結果：**")
+        st.write(transcription[:1500])  # 最初の1500文字だけ表示
+
+        with st.spinner("GPTが解説中..."):
+            explanation = generate_explanation(transcription)
+        
+        st.subheader("🎤 解説")
+        st.write(explanation)  # GPTによる解説
+    else:
+        st.error("無効なYouTube URLです。正しいURLを入力してください。")
