@@ -1,4 +1,7 @@
 streamlit
-opencv-python
 openai
-Pillow
+pytube
+ffmpeg-python
+whisper
+moviepy
+pydub
