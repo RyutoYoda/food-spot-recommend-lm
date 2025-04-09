@@ -1,5 +1,3 @@
 streamlit
 openai
-opencv-python
 Pillow
-youtube-transcript-api
