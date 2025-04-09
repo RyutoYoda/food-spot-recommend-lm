@@ -7,6 +7,7 @@ import tempfile
 import subprocess
 from PIL import Image
 from io import BytesIO
+from yt_dlp import YoutubeDL
 
 st.set_page_config(page_title="YouTube Scene Summarizer", layout="wide")
 st.title("🎥 GPTによるYouTube動画シーン解説")
@@ -20,16 +21,24 @@ if not openai_api_key:
 
 openai.api_key = openai_api_key
 
-# Upload YouTube video file (already downloaded)
-video_file = st.file_uploader("YouTube動画をアップロード（MP4）", type=["mp4"])
+# Input YouTube URL
+youtube_url = st.text_input("🎬 YouTubeのURLを貼ってください")
 
-if video_file:
-    # Save video to temp file
-    temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-    temp_video.write(video_file.read())
-    temp_video_path = temp_video.name
+if youtube_url:
+    with st.spinner("動画をダウンロード中..."):
+        ydl_opts = {
+            'format': 'mp4',
+            'outtmpl': os.path.join(tempfile.gettempdir(), 'downloaded_video.%(ext)s'),
+        }
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(youtube_url, download=True)
+                video_path = ydl.prepare_filename(info)
+        except Exception as e:
+            st.error(f"動画のダウンロードに失敗しました: {e}")
+            st.stop()
 
-    st.video(temp_video_path)
+    st.video(video_path)
 
     if st.button("シーン解析を開始"):
         st.info("画像を抽出しています... 🎞️")
@@ -39,7 +48,7 @@ if video_file:
         output_pattern = os.path.join(output_dir, "scene_%03d.jpg")
 
         command = [
-            "ffmpeg", "-i", temp_video_path,
+            "ffmpeg", "-i", video_path,
             "-vf", "fps=1/10",
             output_pattern
         ]
