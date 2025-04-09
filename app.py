@@ -1,77 +1,72 @@
 import streamlit as st
 import openai
-import cv2
-import numpy as np
 from PIL import Image
+import base64
 import io
-import re
-import time
 
-# --- サイドバーでOpenAI APIキーを入力 ---
-st.sidebar.title("🔧 設定")
+# --- サイドバー設定 ---
+st.sidebar.title("🔑 APIキー設定")
 openai_api_key = st.sidebar.text_input("OpenAI APIキー", type="password")
-
 if not openai_api_key:
-    st.warning("まずサイドバーから OpenAI APIキーを入力してください。")
+    st.warning("OpenAI APIキーをサイドバーから入力してください。")
     st.stop()
-else:
-    openai.api_key = openai_api_key
+openai.api_key = openai_api_key
 
 # --- タイトル ---
-st.title("🎥 YouTube 動画解説")
+st.title("🎬 YouTube動画 × GPT-4V 解説アプリ")
 
-# --- YouTube動画のURLを入力 ---
-url = st.text_input("YouTube動画のURLを入力してください")
+# --- YouTube埋め込み ---
+youtube_url = st.text_input("YouTube動画のURLを入力してください:")
+if youtube_url:
+    st.video(youtube_url)
 
-# --- YouTube Video IDを抽出する関数 ---
-def get_video_id(url):
-    match = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
-    return match.group(1) if match else None
+# --- 画像アップロード ---
+st.header("🖼️ 解説したい場面を画像でアップロード")
+uploaded_file = st.file_uploader("動画からスクリーンショットをアップロードしてください（PNG or JPG）", type=["png", "jpg", "jpeg"])
 
-# --- GPT-4Vによる動画フレーム解説 ---
-def generate_video_frame_description(frame):
+# --- GPT-4Vに画像を送って解説 ---
+def generate_caption(image: Image.Image, style: str):
+    # Base64 encode
     buffered = io.BytesIO()
-    pil_img = Image.fromarray(frame)
-    pil_img.save(buffered, format="PNG")
-    buffered.seek(0)
+    image.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-    # GPT-4Vにフレームを送信して解説を生成
+    # GPT-4Vへリクエスト
+    messages = [
+        {"role": "system", "content": f"あなたは映像分析のプロです。ユーザーがアップロードした動画のワンシーンを、{style}でわかりやすく解説してください。"},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{img_str}"
+                    }
+                }
+            ],
+        },
+    ]
+
     response = openai.ChatCompletion.create(
         model="gpt-4-vision-preview",
-        messages=[
-            {"role": "system", "content": "動画をリアルタイムで見て解説を生成してください"},
-            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64," + buffered.getvalue().hex()}}]}
-        ],
+        messages=messages,
+        max_tokens=500,
     )
     return response.choices[0].message.content
 
-# --- 動画フレームの処理 ---
-def process_video(url):
-    video_id = get_video_id(url)
-    cap = cv2.VideoCapture(url)
-    
-    # 動画のFPS（1秒ごとにフレームをキャプチャ）
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = 0
+# --- 解説スタイル選択 ---
+style = st.selectbox(
+    "解説スタイルを選んでください",
+    ["ニュース風の説明", "野球新聞の見出し", "小学生にもわかるように", "冗談交じりの解説"]
+)
 
-    # 動画が開けたらフレームを逐次取得
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        # 1秒ごとにフレームをキャプチャして解説
-        if frame_count % int(fps) == 0:
-            st.image(frame, caption=f"フレーム {frame_count}")
-            with st.spinner("GPTがフレームを解説中..."):
-                explanation = generate_video_frame_description(frame)
-            st.write(f"**解説**: {explanation}")
-        
-        frame_count += 1
-        time.sleep(1)  # 1秒ごとにフレームをキャプチャ
+# --- 画像がアップされたらGPTで解説 ---
+if uploaded_file:
+    image = Image.open(uploaded_file)
+    st.image(image, caption="アップロードされたシーン", use_column_width=True)
 
-    cap.release()
+    with st.spinner("GPTが解説中..."):
+        result = generate_caption(image, style)
 
-# --- メイン処理 ---
-if url:
-    process_video(url)
+    st.subheader("🧠 GPTによる解説")
+    st.write(result)
