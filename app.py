@@ -104,6 +104,9 @@ def get_recommendation():
             st.error("OpenAI APIキーを入力してください")
             return
         
+        # クライアントの設定
+        client = openai.OpenAI(api_key=api_key)
+        
         # レベルに応じたシステムメッセージを設定
         level_instructions = {
             "Level 1": "あなたは基本的なレストラン情報を提供します。料理のジャンルとロケーションに基づいた簡単な推薦を行います。",
@@ -146,7 +149,7 @@ def get_recommendation():
         """
         
         # APIリクエスト
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4-turbo",
             messages=[
                 {"role": "system", "content": system_message},
@@ -226,13 +229,15 @@ if user_question and user_question not in [m["content"] for m in st.session_stat
     
     try:
         if api_key:
+            client = openai.OpenAI(api_key=api_key)
+            
             context = ""
             if st.session_state.recommendations:
                 context = "以下のレストラン情報について回答してください:\n"
                 for i, rest in enumerate(st.session_state.recommendations):
                     context += f"レストラン{i+1}: {rest['name']} ({rest.get('cuisine', '不明')})\n"
             
-            response = openai.chat.completions.create(
+            response = client.chat.completions.create(
                 model="gpt-4-turbo",
                 messages=[
                     {"role": "system", "content": "あなたはレストラン検索AIアシスタントです。ユーザーのレストランに関する質問に丁寧に答えてください。"},
