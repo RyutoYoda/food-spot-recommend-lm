@@ -54,7 +54,7 @@ with st.sidebar:
             )
             dietary_restrictions = st.multiselect(
                 "食事制限",
-                ["ベジタリアン", "ビーガン", "グルテンフリー", "アレルギー配慮"]
+                ["ビーガン", "グルテンフリー", "アレルギー配慮"]
             )
             
         with st.expander("過去の訪問履歴"):
