@@ -75,9 +75,10 @@ if "Level 3" in level and ('fav_cuisine' in locals() or 'fav_atmosphere' in loca
         user_context += f"・過去に訪れて良かったお店: {visited_places}\n"
 
 def get_hotpepper_restaurants(api_key, location, cuisine_type, budget):
+    """ホットペッパーAPIから店舗情報を取得（URL必須）"""
     genre_map = {"日本食": "G004", "寿司": "G001", "焼肉": "G008", "ラーメン": "G013", "中華": "G007", "イタリアン": "G005", "フレンチ": "G006", "韓国料理": "G017", "エスニック": "G009,G010", "ファストフード": "G014"}
     budget_map = {"〜1,000円": "B009", "1,000〜3,000円": "B010", "3,000〜5,000円": "B011", "5,000〜10,000円": "B008", "10,000円〜": "B012"}
-    params = {'key': api_key, 'keyword': location, 'format': 'json', 'count': 10}
+    params = {'key': api_key, 'keyword': location, 'format': 'json', 'count': 20}  # countを増やして選択肢を増やす
     if cuisine_type != "指定なし" and cuisine_type in genre_map:
         params['genre'] = genre_map[cuisine_type]
     if budget in budget_map:
@@ -85,43 +86,71 @@ def get_hotpepper_restaurants(api_key, location, cuisine_type, budget):
     try:
         response = requests.get('http://webservice.recruit.co.jp/hotpepper/gourmet/v1/', params=params)
         data = response.json()
-        return data.get('results', {}).get('shop', [])
+        shops = data.get('results', {}).get('shop', [])
+        
+        # URLが存在する店舗のみをフィルタリング
+        valid_shops = []
+        for shop in shops:
+            if 'urls' in shop and 'pc' in shop['urls'] and shop['urls']['pc']:
+                valid_shops.append(shop)
+        
+        return valid_shops
     except Exception as e:
         st.error(f"ホットペッパーAPIエラー: {str(e)}")
         return []
 
+def format_shop_for_gpt(shop):
+    """店舗情報をGPT用にフォーマット"""
+    return {
+        'id': shop.get('id', ''),
+        'name': shop.get('name', '不明'),
+        'genre': shop.get('genre', {}).get('name', '不明'),
+        'budget': shop.get('budget', {}).get('name', '不明'),
+        'access': shop.get('access', '不明'),
+        'address': shop.get('address', '不明'),
+        'catch': shop.get('catch', '情報なし'),
+        'open': shop.get('open', '不明'),
+        'url': shop.get('urls', {}).get('pc', ''),
+        'photo': shop.get('photo', {}).get('pc', {}).get('m', '')
+    }
+
 def get_recommendation():
     try:
         client = openai.OpenAI(api_key=openai.api_key)
+        
+        # ホットペッパーから実在する店舗のみを取得
         hotpepper_restaurants = get_hotpepper_restaurants(hotpepper_api_key, location, cuisine_type, budget)
-        hotpepper_context = ""
-        if hotpepper_restaurants:
-            hotpepper_context = "以下はホットペッパーグルメAPIから取得した実際の店舗情報です:\n\n"
-            for i, shop in enumerate(hotpepper_restaurants[:5]):
-                hotpepper_context += f"店舗{i+1}:\n"
-                hotpepper_context += f"- 店名: {shop.get('name', '不明')}\n"
-                hotpepper_context += f"- ジャンル: {shop.get('genre', {}).get('name', '不明')}\n"
-                hotpepper_context += f"- 予算: {shop.get('budget', {}).get('name', '不明')}\n"
-                hotpepper_context += f"- アクセス: {shop.get('access', '不明')}\n"
-                hotpepper_context += f"- 住所: {shop.get('address', '不明')}\n"
-                hotpepper_context += f"- キャッチ: {shop.get('catch', '情報なし')}\n"
-                hotpepper_context += f"- 営業時間: {shop.get('open', '不明')}\n"
-                if 'urls' in shop and 'pc' in shop['urls']:
-                    hotpepper_context += f"- URL: {shop['urls']['pc']}\n"
-                hotpepper_context += "\n"
-        else:
-            hotpepper_context = "ホットペッパーグルメAPIからは該当する店舗情報が取得できませんでした。\n"
+        
+        # 店舗が取得できない場合は推薦を行わない
+        if not hotpepper_restaurants:
+            st.error("条件に合う店舗が見つかりませんでした。条件を変更して再度お試しください。")
+            return None
+        
+        # GPT用の店舗リストを作成
+        shop_list = []
+        for i, shop in enumerate(hotpepper_restaurants):
+            formatted_shop = format_shop_for_gpt(shop)
+            shop_list.append(f"""
+店舗ID: {i+1}
+店名: {formatted_shop['name']}
+ジャンル: {formatted_shop['genre']}
+予算: {formatted_shop['budget']}
+アクセス: {formatted_shop['access']}
+住所: {formatted_shop['address']}
+キャッチ: {formatted_shop['catch']}
+営業時間: {formatted_shop['open']}
+""")
 
         system_message = {
-            "Level 1": "あなたは基本的なレストラン情報を提供します。",
-            "Level 2": "あなたは条件付きレストラン推薦AIです。",
-            "Level 3": "あなたは高度にパーソナライズされたレストラン推薦AIです。"
+            "Level 1": "あなたは基本的なレストラン情報を提供するAIです。",
+            "Level 2": "あなたは条件付きレストラン推薦AIです。ユーザーの条件に最も適した店舗を選択してください。",
+            "Level 3": "あなたは高度にパーソナライズされたレストラン推薦AIです。ユーザーの個人情報と条件を総合的に考慮して最適な店舗を選択してください。"
         }[level.split(":")[0].strip()]
 
-        if hotpepper_context:
-            system_message += "\n\nホットペッパーAPIの実店舗情報を優先して推薦に使用してください。"
-
         prompt = f"""
+【重要】以下のリストにある実在する店舗の中からのみ推薦してください。リストにない店舗は絶対に推薦しないでください。
+
+【検索条件】
 場所: {location}
 料理ジャンル: {cuisine_type if cuisine_type != '指定なし' else '指定なし'}
 予算: {budget}
@@ -130,22 +159,28 @@ def get_recommendation():
 追加リクエスト: {additional_requests}
 
 {user_context}
-{hotpepper_context}
 
-以下の形式でJSONで出力してください。存在しないお店は絶対に出力しないでください:
+【利用可能な実在店舗リスト】
+{''.join(shop_list)}
+
+上記の店舗リストの中から、条件に最も適した3〜5店舗を選択し、以下の形式でJSONで出力してください:
+
 ```json
 [
   {{
-    "name": "店名",
-    "cuisine": "料理ジャンル",
-    "budget": "予算の目安",
+    "shop_id": "店舗ID番号（上記リストの番号）",
+    "name": "店名（リストと完全に同じ名前）",
+    "cuisine": "料理ジャンル（リストと同じ）",
+    "budget": "予算の目安（リストと同じ）",
     "highlights": ["おすすめポイント1", "おすすめポイント2"],
     "atmosphere": "雰囲気の説明",
-    "address": "住所",
+    "address": "住所（リストと同じ）",
     "reason": "このお店を推薦する理由"
   }}
 ]
-```"""
+```
+"""
+        
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -154,19 +189,52 @@ def get_recommendation():
             ],
             temperature=0.7
         )
+        
         response_text = response.choices[0].message.content
         json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response_text)
         json_str = json_match.group(1) if json_match else response_text
-        recommendations = json.loads(json_str)
-        if hotpepper_restaurants:
-            for recommendation in recommendations:
-                for shop in hotpepper_restaurants:
-                    if recommendation["name"] in shop["name"] or shop["name"] in recommendation["name"]:
-                        if 'urls' in shop and 'pc' in shop['urls']:
-                            recommendation["url"] = shop['urls']['pc']
-                        break
-        st.session_state.recommendations = recommendations
-        return recommendations
+        
+        try:
+            gpt_recommendations = json.loads(json_str)
+        except json.JSONDecodeError:
+            st.error("AIからの応答を解析できませんでした。再度お試しください。")
+            return None
+        
+        # GPTの推薦結果を実際の店舗データとマッチング
+        final_recommendations = []
+        for rec in gpt_recommendations:
+            try:
+                shop_id = int(rec.get('shop_id', 0)) - 1  # リストのインデックスに変換
+                if 0 <= shop_id < len(hotpepper_restaurants):
+                    actual_shop = hotpepper_restaurants[shop_id]
+                    formatted_shop = format_shop_for_gpt(actual_shop)
+                    
+                    # 実際の店舗情報で推薦情報を補完
+                    final_rec = {
+                        "name": formatted_shop['name'],
+                        "cuisine": formatted_shop['genre'],
+                        "budget": formatted_shop['budget'],
+                        "highlights": rec.get('highlights', ['美味しい料理', '良いサービス']),
+                        "atmosphere": rec.get('atmosphere', '素敵な雰囲気'),
+                        "address": formatted_shop['address'],
+                        "access": formatted_shop['access'],
+                        "open": formatted_shop['open'],
+                        "catch": formatted_shop['catch'],
+                        "reason": rec.get('reason', 'おすすめの店舗です'),
+                        "url": formatted_shop['url'],  # 必ずURLが存在する
+                        "photo": formatted_shop['photo']
+                    }
+                    final_recommendations.append(final_rec)
+            except (ValueError, KeyError, IndexError):
+                continue  # 不正な推薦は無視
+        
+        if not final_recommendations:
+            st.error("推薦結果を生成できませんでした。条件を変更して再度お試しください。")
+            return None
+            
+        st.session_state.recommendations = final_recommendations
+        return final_recommendations
+        
     except Exception as e:
         st.error(f"エラーが発生しました: {str(e)}")
         return None
@@ -177,6 +245,8 @@ if st.button("レストランを探す", type="primary"):
 
 if st.session_state.recommendations:
     st.subheader("おすすめレストラン")
+    st.info(f"見つかった店舗: {len(st.session_state.recommendations)}件（すべて実在する店舗です）")
+    
     for rest in st.session_state.recommendations:
         with st.container():
             col1, col2 = st.columns([1, 2])
@@ -188,16 +258,37 @@ if st.session_state.recommendations:
                     st.write("✨ **おすすめポイント**")
                     for h in rest["highlights"]:
                         st.write(f"- {h}")
+                
+                # 写真があれば表示
+                if rest.get("photo"):
+                    st.image(rest["photo"], width=200)
+                    
             with col2:
                 st.write("🏠 **雰囲気**")
                 st.write(rest.get("atmosphere", "情報なし"))
-                st.write("📍 **住所**")
+                
+                st.write("📍 **住所・アクセス**")
                 st.write(rest.get("address", "住所情報なし"))
+                if rest.get("access"):
+                    st.write(f"🚃 {rest['access']}")
+                
+                st.write("⏰ **営業時間**")
+                st.write(rest.get("open", "営業時間情報なし"))
+                
+                if rest.get("catch"):
+                    st.write("📝 **お店からのメッセージ**")
+                    st.write(rest["catch"])
+                
                 st.write("💡 **推薦理由**")
                 st.write(rest.get("reason", "理由情報なし"))
-                if "url" in rest:
+                
+                # 必ずURLが存在することが保証されている
+                if rest.get("url"):
                     st.write("🔗 **詳細情報**")
-                    st.markdown(f"[ホットペッパーで見る]({rest['url']})")
+                    st.markdown(f"[ホットペッパーで詳細を見る]({rest['url']})")
             st.divider()
+else:
+    st.info("「レストランを探す」ボタンを押して、おすすめの店舗を見つけましょう！")
 
-st.caption("Pekorin AI - 飲食店推薦サービス powed by r.yoda")
+st.caption("Pekorin AI - 飲食店推薦サービス powered by r.yoda")
+st.caption("※ すべての店舗情報はホットペッパーグルメAPIから取得した実在する店舗です")
