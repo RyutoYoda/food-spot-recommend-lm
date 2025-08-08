@@ -75,10 +75,10 @@ if "Level 3" in level and ('fav_cuisine' in locals() or 'fav_atmosphere' in loca
         user_context += f"・過去に訪れて良かったお店: {visited_places}\n"
 
 def get_hotpepper_restaurants(api_key, location, cuisine_type, budget):
-    """ホットペッパーAPIから店舗情報を取得（URL必須）"""
+    """ホットペッパーAPIから店舗情報を取得"""
     genre_map = {"日本食": "G004", "寿司": "G001", "焼肉": "G008", "ラーメン": "G013", "中華": "G007", "イタリアン": "G005", "フレンチ": "G006", "韓国料理": "G017", "エスニック": "G009,G010", "ファストフード": "G014"}
     budget_map = {"〜1,000円": "B009", "1,000〜3,000円": "B010", "3,000〜5,000円": "B011", "5,000〜10,000円": "B008", "10,000円〜": "B012"}
-    params = {'key': api_key, 'keyword': location, 'format': 'json', 'count': 20}  # countを増やして選択肢を増やす
+    params = {'key': api_key, 'keyword': location, 'format': 'json', 'count': 20}
     if cuisine_type != "指定なし" and cuisine_type in genre_map:
         params['genre'] = genre_map[cuisine_type]
     if budget in budget_map:
@@ -88,11 +88,38 @@ def get_hotpepper_restaurants(api_key, location, cuisine_type, budget):
         data = response.json()
         shops = data.get('results', {}).get('shop', [])
         
-        # URLが存在する店舗のみをフィルタリング
+        # デバッグ情報を表示
+        st.info(f"ホットペッパーAPIから取得した店舗数: {len(shops)}件")
+        
+        if not shops:
+            st.warning("ホットペッパーAPIからデータを取得できませんでした。")
+            st.write("APIレスポンス:", data)
+            return []
+        
+        # URLの存在をチェック（柔軟にチェック）
         valid_shops = []
+        url_missing_count = 0
+        
         for shop in shops:
-            if 'urls' in shop and 'pc' in shop['urls'] and shop['urls']['pc']:
+            # URLが存在するかチェック（より柔軟に）
+            has_url = False
+            if 'urls' in shop:
+                if 'pc' in shop['urls'] and shop['urls']['pc']:
+                    has_url = True
+                elif 'mobile' in shop['urls'] and shop['urls']['mobile']:
+                    has_url = True  # モバイル版URLでも可
+            
+            if has_url:
                 valid_shops.append(shop)
+            else:
+                url_missing_count += 1
+        
+        st.info(f"URLありの店舗: {len(valid_shops)}件, URLなしの店舗: {url_missing_count}件")
+        
+        # URLなしでも最低限の店舗は返す（緊急対応）
+        if not valid_shops and shops:
+            st.warning("URLありの店舗が見つからないため、全ての店舗を表示します")
+            return shops[:10]  # 最初の10件を返す
         
         return valid_shops
     except Exception as e:
@@ -101,17 +128,25 @@ def get_hotpepper_restaurants(api_key, location, cuisine_type, budget):
 
 def format_shop_for_gpt(shop):
     """店舗情報をGPT用にフォーマット"""
+    # URLの取得（PC版を優先、なければモバイル版）
+    url = ''
+    if 'urls' in shop:
+        if 'pc' in shop['urls'] and shop['urls']['pc']:
+            url = shop['urls']['pc']
+        elif 'mobile' in shop['urls'] and shop['urls']['mobile']:
+            url = shop['urls']['mobile']
+    
     return {
         'id': shop.get('id', ''),
         'name': shop.get('name', '不明'),
-        'genre': shop.get('genre', {}).get('name', '不明'),
-        'budget': shop.get('budget', {}).get('name', '不明'),
+        'genre': shop.get('genre', {}).get('name', '不明') if isinstance(shop.get('genre'), dict) else '不明',
+        'budget': shop.get('budget', {}).get('name', '不明') if isinstance(shop.get('budget'), dict) else '不明',
         'access': shop.get('access', '不明'),
         'address': shop.get('address', '不明'),
         'catch': shop.get('catch', '情報なし'),
         'open': shop.get('open', '不明'),
-        'url': shop.get('urls', {}).get('pc', ''),
-        'photo': shop.get('photo', {}).get('pc', {}).get('m', '')
+        'url': url,
+        'photo': shop.get('photo', {}).get('pc', {}).get('m', '') if isinstance(shop.get('photo'), dict) else ''
     }
 
 def get_recommendation():
@@ -123,7 +158,7 @@ def get_recommendation():
         
         # 店舗が取得できない場合は推薦を行わない
         if not hotpepper_restaurants:
-            st.error("条件に合う店舗が見つかりませんでした。条件を変更して再度お試しください。")
+            st.error("条件に合う店舗が見つかりませんでした。エリア名を変更するか、条件を緩くして再度お試しください。")
             return None
         
         # GPT用の店舗リストを作成
@@ -245,7 +280,7 @@ if st.button("レストランを探す", type="primary"):
 
 if st.session_state.recommendations:
     st.subheader("おすすめレストラン")
-    st.info(f"見つかった店舗: {len(st.session_state.recommendations)}件（すべて実在する店舗です）")
+    st.info(f"見つかった店舗: {len(st.session_state.recommendations)}件")
     
     for rest in st.session_state.recommendations:
         with st.container():
@@ -282,13 +317,16 @@ if st.session_state.recommendations:
                 st.write("💡 **推薦理由**")
                 st.write(rest.get("reason", "理由情報なし"))
                 
-                # 必ずURLが存在することが保証されている
+                # URLがあれば詳細リンクを表示
                 if rest.get("url"):
                     st.write("🔗 **詳細情報**")
                     st.markdown(f"[ホットペッパーで詳細を見る]({rest['url']})")
+                else:
+                    st.write("🔗 **詳細情報**")
+                    st.write("詳細リンクは取得できませんでした")
             st.divider()
 else:
     st.info("「レストランを探す」ボタンを押して、おすすめの店舗を見つけましょう！")
 
 st.caption("Pekorin AI - 飲食店推薦サービス powered by r.yoda")
-st.caption("※ すべての店舗情報はホットペッパーグルメAPIから取得した実在する店舗です")
+st.caption("※ 店舗情報はホットペッパーグルメAPIから取得しています")
