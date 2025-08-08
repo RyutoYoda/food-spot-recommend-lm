@@ -185,10 +185,6 @@ def get_recommendation():
     try:
         client = openai.OpenAI(api_key=openai.api_key)
         
-def get_recommendation():
-    try:
-        client = openai.OpenAI(api_key=openai.api_key)
-        
         # ホットペッパーから店舗を取得（段階的に条件緩和）
         hotpepper_restaurants = get_hotpepper_restaurants(hotpepper_api_key, location, cuisine_type, budget)
         
