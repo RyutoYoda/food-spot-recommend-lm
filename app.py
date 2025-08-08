@@ -11,7 +11,7 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 hotpepper_api_key = st.secrets["HOTPEPPER_API_KEY"]
 
 # --- ページ設定 ---
-st.set_page_config(page_title="食事処提案AI", layout="wide")
+st.set_page_config(page_title="AI", layout="wide")
 
 # --- セッション状態の初期化 ---
 if "messages" not in st.session_state:
@@ -46,7 +46,7 @@ with st.sidebar:
             visited_places = st.text_area("過去に訪れて良かったお店（店名を改行区切りで入力）")
 
 # --- メイン画面 ---
-st.title("食事処提案AI")
+st.title("Pekorin AI")
 
 with st.expander("条件を指定", expanded=True):
     col1, col2 = st.columns(2)
@@ -200,5 +200,5 @@ if st.session_state.recommendations:
                     st.markdown(f"[ホットペッパーで見る]({rest['url']})")
             st.divider()
 
-st.caption("食事処提案AI - レストラン推薦サービス powed by r.yoda")
+st.caption("Pekorin AI - 飲食店推薦サービス powed by r.yoda")
 st.caption(f"現在の日時: {datetime.now().strftime('%Y年%m月%d日 %H:%M')}")
