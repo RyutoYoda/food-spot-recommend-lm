@@ -59,7 +59,7 @@ with st.expander("条件を指定", expanded=True):
         budget = st.select_slider("予算（一人あたり）", options=["〜1,000円", "1,000〜3,000円", "3,000〜5,000円", "5,000〜10,000円", "10,000円〜"])
         party_size = st.number_input("人数", min_value=1, max_value=20, value=2)
 
-    occasion = st.selectbox("利用シーン", ["指定なし", "ランチ", "ディナー", "デート", "家族との食事", "友人との会食", "ビジネス", "特別な記念日"])
+    occasion = st.selectbox("利用シーン", ["指定なし", "ランチ", "ディナー", "デート", "家族との食事", "友人との会食", "恩師との食事" ,"ビジネス", "特別な記念日"])
     additional_requests = st.text_area("その他のリクエスト", placeholder="例：個室希望、禁煙席希望、駅から近いなど")
 
 user_context = ""
@@ -201,4 +201,3 @@ if st.session_state.recommendations:
             st.divider()
 
 st.caption("Pekorin AI - 飲食店推薦サービス powed by r.yoda")
-st.caption(f"現在の日時: {datetime.now().strftime('%Y年%m月%d日 %H:%M')}")
