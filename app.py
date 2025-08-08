@@ -116,7 +116,7 @@ def get_recommendation():
             "Level 1": "あなたは基本的なレストラン情報を提供します。",
             "Level 2": "あなたは条件付きレストラン推薦AIです。",
             "Level 3": "あなたは高度にパーソナライズされたレストラン推薦AIです。"
-        }[level.split(":"[0]).strip()]
+        }[level.split(":")[0].strip()]
 
         if hotpepper_context:
             system_message += "\n\nホットペッパーAPIの実店舗情報を優先して推薦に使用してください。"
