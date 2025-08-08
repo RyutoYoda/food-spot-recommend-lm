@@ -132,7 +132,7 @@ def get_recommendation():
 {user_context}
 {hotpepper_context}
 
-以下の形式でJSONで出力してください:
+以下の形式でJSONで出力してください。存在しないお店は絶対に出力しないでください:
 ```json
 [
   {{
