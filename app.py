@@ -200,5 +200,5 @@ if st.session_state.recommendations:
                     st.markdown(f"[ホットペッパーで見る]({rest['url']})")
             st.divider()
 
-st.caption("食事処提案AI - レストラン推薦サービス")
+st.caption("食事処提案AI - レストラン推薦サービス powed by r.yoda")
 st.caption(f"現在の日時: {datetime.now().strftime('%Y年%m月%d日 %H:%M')}")
